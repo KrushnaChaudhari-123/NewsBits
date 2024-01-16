@@ -4,6 +4,7 @@ const connection = require('./DB/conn');
 const User = require('./DB/model/userModel');
 const bcrypt = require('bcrypt');
 const razorpay = require('./Routes/Subscription');
+const NewsItem = require('./DB/model/favItem');
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -30,7 +31,7 @@ app.post('/api/saveOrder', async (req, res) => {
             expiryDate.setFullYear(expiryDate.getFullYear() + 1);
         } else {
             // Handle other cases as needed
-            return res.json({ status: "failed", message: "Invalid ammount" });
+            return res.json({ status: "failed", message: "Invalid amount" });
         }
 
         const response = await transactionDB.create({ paymentId, userId, ammount, expiryDate });
@@ -43,15 +44,15 @@ app.post('/api/saveOrder', async (req, res) => {
             { _id: userId },
             { isAdmin: true },
             { new: true }
-          );
-          console.log(updatedUser);
+        );
+        console.log(updatedUser);
         if (updatedUser) {
             return res.json({ status: "ok", message: "success" });
         } else {
-            return res.json({status: "failed", message: "Failed to change USer Status"})
+            return res.json({ status: "failed", message: "Failed to change USer Status" })
         }
 
-        
+
     } catch (error) {
         return res.status(500).json({ status: "failed", message: "Internal server error" });
     }
@@ -136,34 +137,134 @@ app.post('/api/register', async (req, res) => {
         throw error;
     }
 });
+function compareDates(currentDate, subscriptionDateString, amount) {
+    // Convert the subscription date string to a Date object
+    const subscriptionDate = new Date(subscriptionDateString);
+
+    // Calculate the duration based on the amount
+    let duration;
+    if (amount === 50) {
+        duration = 30; // 30 days for 1 month
+    } else if (amount === 200) {
+        duration = 180; // 180 days for 6 months
+    } else if (amount === 300) {
+        duration = 365; // 365 days for 1 year
+    } else {
+        // Handle other amounts as needed
+        return "Invalid amount";
+    }
+
+    // Calculate the expiration date
+    const expirationDate = new Date(subscriptionDate);
+    expirationDate.setDate(subscriptionDate.getDate() + duration);
+
+    // Compare with the current date
+    const currentDateObject = new Date(currentDate);
+    if (currentDateObject < expirationDate) {
+        return true;
+    } else {
+        return false;
+    }
+}
 
 app.post('/api/login', async (req, res) => {
-    let { email, password } = req.body;
-    console.log(email, password);
+    const { email, password } = req.body;
+
     try {
         const user = await User.findOne({ email }).lean();
-        console.log(user);
 
         if (!user) {
-            return res.json({ status: 'error', error: 'Invalid username or password' })
+            return res.json({ status: 'error', error: 'Invalid username or password' });
         }
-        //comp(password, user.password);
-        if (await bcrypt.compare(password, user.password)) {
-            //correct password
-            if (user.hasOwnProperty("isAdmin")) {
-                return res.json({ status: 'ok', email: email, isAdmin: true, user: user })
+
+        const passwordMatch = await bcrypt.compare(password, user.password);
+        console.log(passwordMatch);
+
+        if (passwordMatch) {
+            const checkSubs = await transactionDB.find({ userId: user._id });
+
+            if (checkSubs && checkSubs.length > 0) {
+                const lastSubs = checkSubs.pop();
+                const susbsAmount = lastSubs.ammount;
+                const timestamp = lastSubs.timestamp;
+                const currentDate = new Date();
+                const result = compareDates(currentDate, timestamp, susbsAmount);
+
+                if (!result) {
+                    return res.json({ status: 'ok', email, isAdmin: true, user, result });
+                } else {
+                    return res.json({ status: 'ok', email, isAdmin: false, user, result });
+                }
             } else {
-                return res.json({ status: 'ok', email: email, isAdmin: false, user: user })
+                // Handle case where no subscriptions are found
+                return res.json({ status: 'ok', email, isAdmin: false, user, result: false });
             }
         } else {
             return res.json({ status: 'error', error: 'Invalid username or password' });
         }
     } catch (err) {
-        //console.error(JSON.stringify(err));
+        console.error(err);
         return res.json({ status: 'error', error: 'Invalid username or password' });
     }
 });
 
+
+app.post('/api/addToFav', async (req, res) => {
+    let { title, description, imageUrl, newsUrl, author, date, source, userId } = req.body;
+    console.log(req.body);
+    try {
+        const findItem = await NewsItem.findOne({ newsUrl: newsUrl });
+        if (findItem) {
+            const response = await NewsItem.deleteOne({ userId: userId });
+
+            if (response) {
+                return res.json({ status: "ok", message: "sucess" });
+            }
+        }
+        const response = await NewsItem.create({ title, description, imageUrl, newsUrl, author, date, source, userId });
+
+        if (response) {
+            return res.json({ status: "ok", message: "sucess" });
+        }
+    } catch (error) {
+        return res.status(500).json({ status: "failed", message: "internal Server Error" })
+    }
+})
+
+app.post('/api/checkFav', async (req, res) => {
+    const { newsUrl } = req.body;
+    try {
+        const findItem = await NewsItem.findOne({ newsUrl: newsUrl });
+        if (findItem) {
+            return res.json({ status: "ok", message: "sucess" });
+        }
+        return res.json({ status: "failed" });
+    } catch (err) {
+        return res.status(500).json({ status: "failed", message: "internal Server Error" })
+    }
+})
+
+app.post('/api/getFav', async (req, res) => {
+    const { userId } = req.body;
+    try {
+        let response = await NewsItem.find({}).lean();
+        //console.log(response);
+        if (response == []) {
+            return res.json({ status: "ok", data: "No favourites Yet" });
+        }
+        response = response.filter(item => {
+            console.log(userId, item.userId);
+            return item.userId == userId
+        });
+        // console.log(response);
+        if (response) {
+            return res.json({ status: "ok", message: "sucess", data: response });
+        }
+        return res.json({ status: "failed", message: "couldn't fetch data" })
+    } catch (error) {
+        return res.json({ status: "failed", message: "Internal server error" })
+    }
+})
 app.post('/', razorpay);
 
 app.listen(8080, () => console.log('Server running on 8080'));

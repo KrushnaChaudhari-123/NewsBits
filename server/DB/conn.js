@@ -6,7 +6,7 @@ module.exports = () => {
 		useUnifiedTopology: true,
 	};
 	try {
-		mongoose.connect('mongodb+srv://ritesh:1234@cluster0.h4exc5d.mongodb.net/', connectionParams);
+		mongoose.connect('mongodb+srv://krushna:12345@cluster0.wgefire.mongodb.net/', connectionParams);
 		console.log("Connected to database successfully");
 	} catch (error) {
 		console.log(error);
